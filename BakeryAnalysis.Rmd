@@ -1,0 +1,241 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+This R-markdown entails the analysis i conducted of the data set "Transactions from a bakery" provided by the kaggle user Xavier (https://www.kaggle.com/xvivancos). 
+
+The data set is loaded regularly for the Experimental Data Analysis (EDA) and also read in as transaction data using the read.transactions() function from the R-package "arules".
+```{r, warning=F}
+library(ggplot2)
+library(tidyverse)
+library(ggpubr)
+library(lubridate)
+library(arules)
+library(arulesViz)
+library(knitr)
+library(gridExtra)
+
+data <- read.csv("/Users/julianblau/Downloads/BreadBasket_DMS.csv")
+transaction.data <- read.transactions("/Users/julianblau/Downloads/BreadBasket_DMS.csv", 
+                                      format="single", cols=c(3,4), sep=",", 
+                                      rm.duplicates=TRUE)
+
+```
+
+A quick overview of the data set at hand. 
+```{r}
+str(data)
+head(data)
+
+```
+
+Converting the "Date" and "Time" formats for further analysis.
+```{r}
+data <- data %>%
+  mutate(
+    Date = as.Date(Date),
+    Time = hms(Time)
+  )
+
+data$Weekdays <- weekdays(data$Date)
+
+```
+
+Analyzing most frequently purchased products. 
+```{r}
+data.items <- data %>% group_by(Item) %>% summarise(count=n())
+data.items <- data.items[order(-data.items$count),]
+data.items
+
+ggplot(data.items[1:10,], aes(x = reorder(Item, -count),
+                              y = count, fill=count))+
+  geom_bar(stat = "identity")+
+  labs(title="Most purchased items", x="Item",
+       y="count")+ 
+  theme(axis.title = element_text(size=12),
+        axis.text=element_text(size=8, angle = 35))
+  
+
+```
+Coffee is the most purchased item at the bakery, followed by bread, tea and other products. The item "NONE" is unknown but will not be excluded as the information will be updated once clarified in the kaggle discussion thread.
+
+
+A quick look at the items sold at the bakery. Here the item "Adjustment" appears, which seems to be some input from the cashier machine. 
+```{r}
+items <- unique(data$Item)
+items <- sort(items, decreasing = F)
+head(items)
+
+```
+
+Analysis of the transactions per month. 
+```{r}
+data.days <- data %>% group_by(Date) %>% summarise(count=n())
+data.days$month <- as.Date(cut(data.days$Date, breaks = "month"))
+data.days$Weekdays <- weekdays(data.days$Date)
+
+ggplot(data.days, aes(month, count, fill=Weekdays))+
+  geom_bar(stat = "identity")+
+  scale_x_date(date_labels = "%B", date_breaks = "1 month")+
+  labs(title="Transaction frequency per month", x="Month")+ 
+  theme(axis.title = element_text(size=12),
+        axis.text.x=element_text(size=8, angle = 35))
+
+```
+October falls short as the data collected is of the 30th of the month and April only includes the first 9 days. This said, November seems to be the month with the most transactions followed by March and February. 
+
+Taking a closer look at the transaction distribution for each weekday, it becomes clear that Saturdays are the highest turnover days. The top 10 days by accumulated transactions are all Saturdays. 
+```{r}
+data.days.desc <- data.days[order(-data.days$count), ]
+data.days.desc
+data.weekday.rev <- aggregate(data.days.desc$count, by=list(Category=data.days.desc$Weekdays), FUN=sum)
+data.weekday.rev <- data.weekday.rev[order(-data.weekday.rev$x), ]
+data.weekday.rev
+data.weekday.rev$percent <- (prop.table(data.weekday.rev$x)*100)
+data.weekday.rev
+
+```
+Combined, all Saturdays make up for almost 23% of all transactions, followed by Fridays and Saturday. 
+
+To ensure that these percentages aren't falsified by a more Saturdays then other days in the data set, the weekdays are summed up. 
+```{r}
+sales.days <- unique(data$Date)
+sales.days <- as.data.frame(sales.days)
+colnames(sales.days) <- "Date"
+sales.days$weekday <- weekdays(as.Date(sales.days$Date))
+sales.days
+sales.days.sum <- sales.days %>% group_by(weekday) %>% summarise(count=n())
+sales.days.sum
+
+```
+The amount of weekdays are almost equal, solely Mondays are missing two days. 
+
+
+```{r}
+ggplot(data.days.desc, aes(x="", y=count, fill=Weekdays))+
+  geom_bar(width = 1, stat = "identity")+
+  coord_polar("y", start=0)+
+  labs(title="Most purchased items", x="Item",
+       y="count")
+
+
+ggplot(data.days.desc, aes(x=reorder(Weekdays, -count), y=count, fill=Weekdays))+
+  geom_bar(stat = "identity")+ 
+  labs(title="Accumulated transactions per weekday", x="Item",
+       y="count")+ 
+  theme(axis.title = element_text(size=12),
+        axis.text.x=element_text(size=8, angle = 35))
+
+```
+These two figures visualize the previous findings of Saturday being the day with the most transactions. 
+
+As Mondays can get quite rough, coffee can be a life saver. Lets look if Mondays show higher coffee sales then other days. 
+```{r}
+coffee.sales <- aggregate(data$Item == "Coffee", by=list(Category=data$Weekdays), FUN=sum)
+coffee.sales$percent <- (prop.table(coffee.sales$x)*100)  
+coffee.sales
+
+```
+Surprisingly, the proportions of coffee sales are fairly similar to the overall transaction proportions for the weekdays. 
+
+Knowing the time and amount of transaction frequencies can help the bakery management to plan their staff schedule accordingly. 
+```{r, warning=F, echo=F}
+a <- data %>%
+  mutate(
+    Hour = as.factor(hour(Time))
+  ) %>%
+  group_by(Hour, Transaction) %>%
+  summarize(
+    Transactions = n_distinct(Item)
+  ) %>%
+  ggplot(
+    aes(x = Hour, fill = Hour)
+  ) +
+  geom_histogram(stat="count") +
+  theme(
+    legend.position="none") +
+  labs(x = "Hour", y = "Transactions", title = "Transactions per hour")
+
+a
+b <- data %>%
+  mutate(
+    Hour = as.factor(hour(Time))
+  ) %>%
+  group_by(Hour, Transaction) %>%
+  summarize(
+    Transactions = n_distinct(Item)
+  ) %>%
+  ggplot(
+    aes(x = Hour, y = Transactions, fill = Hour)
+  ) +
+  geom_boxplot() +
+  theme(
+    legend.position="none" 
+  ) +
+  labs(x = "Hour", y = "Items / transaction", title = "Items per transaction (per hour)")
+
+b
+
+
+```
+The busiest time for the bakery is between 9 am and 4 pm with a peak around lunch time at 11-12 am. Opening hours seem to be 7 am to 8 pm with exceptions where the bakery was open till 1 am the next day. Might have been a big event. 
+
+
+```{r}
+frequentItems <- eclat(transaction.data, parameter = list(supp=0.07, maxlen=15))
+
+itemFrequencyPlot(transaction.data, topN=20, type="absolute", main= "Item Frequency")
+```
+
+
+Now we will take a look at association rules. 
+```{r}
+rules <- apriori(transaction.data, parameter = list(supp= 0.001, conf= 0.5))
+
+ruleConf <- sort(rules, by="confidence", decreasing = T)
+
+inspect(head(ruleConf))
+
+plot(rules)
+
+head(quality(rules))
+
+plot(rules, method = "grouped")
+
+subrules2 <- head(rules, n = 10, by = "lift")
+
+plot(subrules2, method = "graph")
+
+plot(subrules2, method = "paracoord")
+
+```
+
+Lift is the factor by which, the co-occurrence of A and B exceeds the expected probability of A and B co-occurring, had they been independent. So, higher the lift, higher the chance of A and B occurring together.
+```{r}
+rulesHighLift <- sort(rules, by="lift", decreasing = T)
+
+inspect(head(rulesHighLift))
+```
+This said, Coke and Juice have a 10 time higher chance of being bought with a sandwich rather then separately.
+
+
+Now we will look at products that were purchased after/along with Tea. 
+```{r}
+rulesItemSpecific <- apriori (transaction.data, parameter=list (supp=0.001,conf = 0.08), appearance = list (default="lhs",rhs="Tea"), control = list (verbose=F))
+
+rulesItemSpecificConf <- sort(rulesItemSpecific, by="confidence", decreasing = T)
+
+inspect(head(rulesItemSpecificConf))
+```
+
+Lets find out what items where purchased along with Coffee. 
+```{r}
+rulesPurchase <- apriori(transaction.data, parameter = list(supp=0.001, conf=0.005, minlen=2), appearance = list(default="rhs", lhs="Coffee"), control = list(verbose=F))
+
+rulesPurchaseConf <- sort(rulesPurchase, by="confidence", decreasing = T)
+
+inspect(head(rulesPurchaseConf))
+```
+
